@@ -400,6 +400,20 @@ static void uart_cmd_task(void *arg)
                     }
                     break;
 
+                case UART_CMD_GET_FW_VER: {
+                    ESP_LOGI(TAG, "CMD: Get firmware version");
+                    const char *ver = SLAVE_FW_VERSION;
+                    size_t vlen = strlen(ver);
+                    if (vlen > 31) vlen = 31;
+                    uint8_t reply[3 + 31];
+                    reply[0] = UART_CMD_PREFIX_NORMAL;
+                    reply[1] = UART_CMD_GET_FW_VER;
+                    reply[2] = (uint8_t)vlen;
+                    memcpy(&reply[3], ver, vlen);
+                    uart_write_bytes(APP_UART_PORT, (const char *)reply, 3 + vlen);
+                    break;
+                }
+
                 case UART_CMD_GET_VERSION:
                     ESP_LOGI(TAG, "🔨 CMD: Get version");
                     {
