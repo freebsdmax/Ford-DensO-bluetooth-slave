@@ -1,154 +1,177 @@
-﻿# ESP32 Bluetooth A2DP/HFP Slave
+﻿# Ford Player — Slave (ESP32 A2DP)
 
-Українська версія | [中文版本](./README_CN.md)
+Bluetooth-модуль системи: приймає звук з телефона (A2DP) і віддає його Master-платі
+по I2S, а керування та оновлення прошивки отримує по UART.
 
-## 📋 Огляд проекту
+Працює на **ESP-ADF** (Espressif Audio Development Framework).
 
-**Slave ESP32** - це Bluetooth-приймач, який працює разом з Master ESP32 для створення повноцінної Bluetooth аудіо системи. Проект базується на **ESP-ADF (Espressif Audio Development Framework)** для обробки аудіо та Bluetooth стеків. Цей пристрій приймає аудіо через Bluetooth A2DP та передає його до Master ESP32 через I2S для подальшого відтворення, а також передає команди керування через UART.
+---
 
-## 🔌 Підключення апаратного забезпечення
+## Роль у системі
 
 ```
-ESP32 (Slave)                Підключення
-=============                ===========
-GPIO 23  ────────────────── UART TX ── Master ESP32 GPIO 9 (керування)
-GPIO 22  ────────────────── UART RX ── Master ESP32 GPIO 8 (керування)
-GPIO 26  ────────────────── I2S BCLK ─ Master ESP32 GPIO 41 (аудіо)
-GPIO 33  ────────────────── I2S WS ─── Master ESP32 GPIO 39 (аудіо)
-GPIO 25  ────────────────── I2S DOUT ─ Master ESP32 GPIO 40 (аудіо)
-GND      ────────────────── GND ────── Master ESP32 GND
-3.3V     ────────────────── 3.3V ───── Master ESP32 3.3V
-
-Bluetooth: Вбудований модуль ESP32
-Speaker: Підключений до аудіо кодека (опціонально)
+ телефон ──Bluetooth(A2DP/AVRCP)──► SLAVE ──I2S──► MASTER ──► підсилювач
+                                     ▲
+                                     └──UART (керування + OTA)── MASTER
 ```
 
-### UART конфігурація (керування)
-- **Швидкість**: 115200 bps
-- **Дані**: 8 біт
-- **Парність**: Відсутня
-- **Стоп-біт**: 1
-- **Потік**: Без контролю
-- **Призначення**: Команди керування, OTA оновлення
+- **Аудіо**: телефон → A2DP → Slave декодує → I2S у Master.
+- **Керування**: Master шле по UART `next/prev/play/pause` → Slave передає їх
+  телефону як **AVRCP** команди.
+- **Оновлення**: Master передає образ прошивки по UART, Slave пише його в OTA-слот.
 
-### I2S конфігурація (аудіо)
-- **Швидкість**: 44.1 kHz (або 48 kHz)
-- **Розрядність**: 16 біт
-- **Канали**: Stereo
-- **Призначення**: Передача аудіо до Master ESP32
+## Залізо
 
-## 🎵 Підтримувані Bluetooth профілі
+| Параметр | Значення |
+|---|---|
+| Чіп | **ESP32** (класичний, з Bluetooth Classic) |
+| Flash | 4 МБ |
+| Framework | **ESP-IDF 5.5.1** + **ESP-ADF** |
+| Роль BT | A2DP **Sink** + AVRCP (CT) |
 
-- **A2DP** (Advanced Audio Distribution Profile): Передача високоякісного аудіо
-- **AVRCP** (Audio/Video Remote Control Profile): Керування відтворенням
-- **HFP** (Hands-Free Profile): Голосові дзвінки через Bluetooth
+## Підключення
 
-## 🚀 Швидкий старт
+### UART до Master
 
-### 1. Збірка та прошивка
-```bash
-cd d:\emulators\esp32-bluetooth
+| Slave | Master | Примітка |
+|---|---|---|
+| TX **GPIO 23** | RX **GPIO 9** | дані Slave → Master |
+| RX **GPIO 22** | TX **GPIO 8** | дані Master → Slave |
+| GND | GND | обов'язково спільна земля |
+
+**Baud: 115200**, 8N1, без flow control. Швидкість має збігатися на обох платах —
+інакше Slave читає сміття й може випадково надіслати телефону `next/pause`.
+
+### I2S до Master
+
+| Сигнал | Пін на Master |
+|---|---|
+| BCLK | GPIO **41** |
+| WS (LRCK) | GPIO **39** |
+| DIN (дані) | GPIO **40** |
+
+Slave тактує лінію (I2S master), Master працює як I2S **slave** і приймає потік.
+
+## Збірка
+
+```powershell
+C:\Espressif\frameworks\esp-idf-v5.5.1\export.ps1
+$env:ADF_PATH = "C:\Espressif\esp-adf"    # обов'язково
+
+cd D:\emulators\Ford-DensO-bluetooth-slave
+idf.py set-target esp32
 idf.py build
-idf.py -p COM_SLAVE flash
 ```
 
-### 2. Підключення до Master ESP32
-1. Підключіть UART лінії між Slave та Master ESP32 (керування)
-2. Підключіть I2S лінії між Slave та Master ESP32 (аудіо):
-   - Slave GPIO 26 (BCLK) ↔ Master GPIO 41
-   - Slave GPIO 33 (WS) ↔ Master GPIO 39  
-   - Slave GPIO 25 (DOUT) ↔ Master GPIO 40
-3. Переконайтеся, що обидва пристрої живляться від 3.3V
-3. Master ESP32 створить Wi-Fi AP для керування
+Результат: `build/Ford-DensO-bluetooth-slave.bin`.
 
-### 3. Bluetooth підключення
-1. Увімкніть Bluetooth на вашому телефоні/комп'ютері
-2. Знайдіть пристрій "ESP32-A2DP-SINK"
-3. Підключіться та почніть відтворення музики
+## Прошивка
 
-## 📋 Архітектура системи
-
-```
-[Bluetooth Device] ── A2DP ──► [Slave ESP32] ── I2S ──► [Master ESP32] ── I2S ──► [Audio Codec] ──► [Speakers]
-                                    │                        │
-                                    ▼                        ▼
-                            [UART керування]        [USB Flash Music]
-                                                     [Web Interface]
+```powershell
+idf.py -p COMx flash monitor
 ```
 
-### Функції Slave ESP32:
-- **Bluetooth прийом**: A2DP аудіо стрімінг
-- **I2S передача**: Відправка аудіо до Master через I2S
-- **UART керування**: Отримання команд від Master
-- **OTA оновлення**: Безпровідне оновлення через Master ESP32
+Розділи (4 МБ):
 
-## ⚙️ Конфігурація
+| Name | Type | Offset | Size |
+|---|---|---|---|
+| nvs | data/nvs | 0x9000 | 24 КБ |
+| otadata | data/ota | 0xF000 | 8 КБ |
+| phy_init | data/phy | 0x11000 | 4 КБ |
+| ota_0 | app | 0x20000 | 1536 КБ |
+| ota_1 | app | 0x1A0000 | 1536 КБ |
 
-### menuconfig налаштування:
+## UART-протокол
+
+Байт-орієнтований, без довжини кадру для команд: перший байт — префікс.
+
+### Звичайні команди (Master → Slave)
+
+| Префікс | Команда | Дія |
+|---|---|---|
+| `0xAA` | `0x04` NEXT | AVRCP next |
+| `0xAA` | `0x05` PREV | AVRCP previous |
+| `0xAA` | `0x06` GET_VERSION | відповідь 65 Б (дати збірок) |
+| `0xAA` | `0x07` PLAY | AVRCP play |
+| `0xAA` | `0x08` PAUSE | AVRCP pause |
+
+### OTA (Master → Slave)
+
+| Префікс | Команда | Формат |
+|---|---|---|
+| `0x55` | `0x01` START | `size:4`, `crc32:4` → відповідь **READY 0x08** |
+| `0x55` | `0x02` DATA | `block:2`, `len:1`, `data[240]`, `crc16:2` → **ACK 0x06** / **NACK 0x07** |
+| `0x55` | `0x03` END | `crc32:4` → **COMPLETE 0x09** |
+| `0x55` | `0x05` ABORT | скасувати |
+
+Відповідь: `[0x55][resp][block:2]` (4 байти), таймаут на блок — 1 с, 3 спроби.
+
+## Автовідтворення
+
+Після підключення телефона Slave:
+1. чекає, поки піднімуться і **A2DP**, і **AVRCP**;
+2. надсилає AVRCP `play` (до 5 спроб по 2 с);
+3. зупиняється, коли аудіо реально пішло (`a2dp_audio_started`).
+
+У логах:
+```
+Sending AVRCP play command (attempt 1/5)
+A2DP audio is already playing
+```
+Якщо AVRCP не піднявся:
+```
+AVRCP did not connect; skipping automatic play command
+```
+
+## OTA від Master
+
+Master передає образ по UART блоками по 240 Б з підтвердженням кожного блоку.
+Швидкість ~115200 → **~25–30 КБ/с**, образ 1.2 МБ ≈ 40–60 с.
+
+> ⚠️ Під час OTA **ніщо інше** не має писати в UART. Master це гарантує м'ютексом;
+> якщо прошивка стара — опитування версії може зірвати передачу.
+
+## Релізи
+
+GitHub Actions (`.github/workflows/release.yml`) збирає прошивку і публікує реліз
+при пуші тега:
+
 ```bash
-menuconfig > Audio HAL > ESP32-Lyrat-Mini V1.1 (або інша плата)
+git add .
+git commit -m "release: v1.1.0"
+git push
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
-### Bluetooth налаштування:
-- **Device Name**: ESP32-A2DP-SINK (можна змінити у коді)
-- **PIN Code**: 1234 (якщо потрібно)
+Артефакти релізу:
+- `Ford-DensO-bluetooth-slave.bin` — образ для OTA з Master;
+- `Ford-DensO-bluetooth-slave-full.bin` — повний образ: `esptool write_flash 0x0`;
+- `bootloader.bin`, `partition-table.bin`, `ota_data_initial.bin`.
 
-## 🔧 Розширена конфігурація
+Збірка: контейнер `espressif/idf:v5.5.1` + ESP-ADF (`fcce23e3`), ціль `esp32`.
 
-### Зміна Bluetooth імені:
-У `main/a2dp_sink_and_hfp_example.c`:
-```c
-#define BLUETOOTH_DEVICE_NAME "My ESP32 Audio"
-```
 
-### Налаштування UART:
-```c
-#define APP_UART_TX_PIN GPIO_NUM_23
-#define APP_UART_RX_PIN GPIO_NUM_22
-#define APP_UART_BAUD 115200
-```
+## Типові проблеми
 
-## 🐛 Вирішення проблем
+| Симптом | Причина / рішення |
+|---|---|
+| Немає звуку в Master | перевір I2S (BCLK 41 / WS 39 / DIN 40) і спільну землю |
+| Музика не стартує сама | AVRCP не підключився, або телефон не має активної медіасесії |
+| Треки не перемикаються з веб-UI | Master не в external mode, або UART не 115200 |
+| OTA зависає на першому блоці | не збігається baud; див. `UART_OTA_MASTER` у логах Master |
+| Slave перезавантажується сам | просідає живлення (піковий струм підсилювача) |
+| Випадкові `next/pause` | різний baud на платах → Slave парсить шум як команди |
 
-### Slave ESP32 не підключається по UART:
-- Перевірте GPIO підключення (TX-RX, RX-TX)
-- Перевірте швидкість UART (має співпадати з Master)
-- Перевірте живлення (3.3V стабільне)
+## Файли
 
-### I2S аудіо не передається:
-- Перевірте I2S підключення (GPIO 25,26,33)
-- Перевірте частоту дискретизації (має співпадати з Master)
-- Перевірте рівні сигналів
+| Файл | Призначення |
+|---|---|
+| `main/a2dp-slave.c` | A2DP sink, AVRCP, UART-таск, автоплей |
+| `main/uart_ota_slave.c` | прийом і запис OTA-образу |
+| `main/uart_ota_protocol.h` | формат пакетів (має збігатися з Master!) |
+| `main/slave_version.h`, `slave_uart_version.h` | версії для телеметрії |
 
-### Bluetooth не працює:
-- Перевірте чи увімкнено Bluetooth на джерелі
-- Перевірте відстань (максимум 10м)
-- Спробуйте перезавантажити Slave ESP32
+## Ліцензія
 
-### Низька якість аудіо:
-- Перевірте Bluetooth версію джерела (бажано 4.0+)
-- Зменшіть відстань між пристроями
-- Перевірте наявність перешкод
-
-## 📊 Системні вимоги
-
-- **ESP32** мікроконтролер
-- **Bluetooth джерело** (телефон, комп'ютер з Bluetooth 4.0+)
-- **3.3V джерело живлення**
-- **UART з'єднання** з Master ESP32 (GPIO 22,23)
-- **I2S з'єднання** з Master ESP32 (GPIO 25,26,33)
-
-## 🔄 Версії компонентів
-
-- **ESP-IDF**: v5.0+
-- **ESP-ADF**: Audio Development Framework
-- **Bluetooth Stack**: Classic Bluetooth
-
-## 📝 Ліцензія
-
-Unlicense OR CC0-1.0
-
-## 🔗 Дивіться також
-
-- **Master ESP32**: [pipeline_play_sdcard_music](../pipeline_play_sdcard_music/)
-- **Повна документація**: ESP-IDF та ESP-ADF
+Код проєкту — для особистого використання. ESP-IDF та ESP-ADF — під ліцензіями Espressif.

@@ -25,7 +25,7 @@
 #include "periph_button.h"
 #include "esp_bt_defs.h"
 #include "esp_gap_bt_api.h"
-#include "esp_hf_client_api.h"
+// #include "esp_hf_client_api.h"  // Disabled HFP
 #include "esp_a2dp_api.h"
 #include "driver/uart.h"
 #include "esp_sleep.h"
@@ -172,7 +172,10 @@ static void enter_deep_sleep(gpio_num_t wakeup_pin);
 #define DISCOVERABLE_TIMEOUT_MS 60000  // 60 seconds discoverable after failed reconnect
 
 static bool auto_reconnect_enabled = true;
-static bool is_connected = false;
+static volatile bool is_connected = false;
+static volatile bool a2dp_connected = false;
+static volatile bool avrc_connected = false;
+static volatile bool a2dp_audio_started = false;
 static uint8_t last_connected_addr[6] = {0};
 static bool has_saved_device = false;
 //static QueueHandle_t i2c_cmd_queue = NULL;
@@ -383,6 +386,20 @@ static void uart_cmd_task(void *arg)
                     }
                     break;
                     
+                case UART_CMD_PLAY:
+                    ESP_LOGI(TAG, "CMD: Play (from master)");
+                    if (bt_periph) {
+                        periph_bluetooth_play(bt_periph);
+                    }
+                    break;
+
+                case UART_CMD_PAUSE:
+                    ESP_LOGI(TAG, "CMD: Pause (from master)");
+                    if (bt_periph) {
+                        periph_bluetooth_pause(bt_periph);
+                    }
+                    break;
+
                 case UART_CMD_GET_VERSION:
                     ESP_LOGI(TAG, "🔨 CMD: Get version");
                     {
@@ -642,31 +659,31 @@ const char *c_inband_ring_state_str[] = {
     "Provided",
 };
 
-static void bt_app_hf_client_audio_open(void)
-{
-    ESP_LOGE(BT_HF_TAG, "bt_app_hf_client_audio_open");
-    int sample_rate = HFP_RESAMPLE_RATE;
-    audio_element_info_t bt_info = {0};
-    audio_element_getinfo(bt_stream_reader, &bt_info);
-    bt_info.sample_rates = sample_rate;
-    bt_info.channels = 1;
-    bt_info.bits = 16;
-    audio_element_setinfo(bt_stream_reader, &bt_info);
-    audio_element_report_info(bt_stream_reader);
-}
+// static void bt_app_hf_client_audio_open(void)  // Disabled HFP
+// {
+//     ESP_LOGE(BT_HF_TAG, "bt_app_hf_client_audio_open");
+//     int sample_rate = HFP_RESAMPLE_RATE;
+//     audio_element_info_t bt_info = {0};
+//     audio_element_getinfo(bt_stream_reader, &bt_info);
+//     bt_info.sample_rates = sample_rate;
+//     bt_info.channels = 1;
+//     bt_info.bits = 16;
+//     audio_element_setinfo(bt_stream_reader, &bt_info);
+//     audio_element_report_info(bt_stream_reader);
+// }
 
-static void bt_app_hf_client_audio_close(void)
-{
-    ESP_LOGE(BT_HF_TAG, "bt_app_hf_client_audio_close");
-    int sample_rate = periph_bluetooth_get_a2dp_sample_rate();
-    audio_element_info_t bt_info = {0};
-    audio_element_getinfo(bt_stream_reader, &bt_info);
-    bt_info.sample_rates = sample_rate;
-    bt_info.channels = 2;
-    bt_info.bits = 16;
-    audio_element_setinfo(bt_stream_reader, &bt_info);
-    audio_element_report_info(bt_stream_reader);
-}
+// static void bt_app_hf_client_audio_close(void)  // Disabled HFP
+// {
+//     ESP_LOGE(BT_HF_TAG, "bt_app_hf_client_audio_close");
+//     int sample_rate = periph_bluetooth_get_a2dp_sample_rate();
+//     audio_element_info_t bt_info = {0};
+//     audio_element_getinfo(bt_stream_reader, &bt_info);
+//     bt_info.sample_rates = sample_rate;
+//     bt_info.channels = 2;
+//     bt_info.bits = 16;
+//     audio_element_setinfo(bt_stream_reader, &bt_info);
+//     audio_element_report_info(bt_stream_reader);
+// }
 
 static uint32_t bt_app_hf_client_outgoing_cb(uint8_t *p_buf, uint32_t sz)
 {
@@ -689,15 +706,15 @@ static uint32_t bt_app_hf_client_outgoing_cb(uint8_t *p_buf, uint32_t sz)
     }
 }
 
-static void bt_app_hf_client_incoming_cb(const uint8_t *buf, uint32_t sz)
-{
-    if (bt_stream_reader) {
-        if (audio_element_get_state(bt_stream_reader) == AEL_STATE_RUNNING) {
-            audio_element_output(bt_stream_reader, (char *)buf, sz);
-            esp_hf_client_outgoing_data_ready();
-        }
-    }
-}
+// static void bt_app_hf_client_incoming_cb(const uint8_t *buf, uint32_t sz)
+// {
+//     if (bt_stream_reader) {
+//         if (audio_element_get_state(bt_stream_reader) == AEL_STATE_RUNNING) {
+//             audio_element_output(bt_stream_reader, (char *)buf, sz);
+//             esp_hf_client_outgoing_data_ready();
+//         }
+//     }
+// }
 /* callback for GAP */
 static void bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param)
 {
@@ -749,14 +766,15 @@ static void bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param)
     }
 }
 
+#if 0  // Disabled HFP
 /* callback for HF_CLIENT */
-void bt_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_t *param)
-{
-    if (event <= ESP_HF_CLIENT_RING_IND_EVT) {
-        ESP_LOGE(BT_HF_TAG, "APP HFP event: %s", c_hf_evt_str[event]);
-    } else {
-        ESP_LOGE(BT_HF_TAG, "APP HFP invalid event %d", event);
-    }
+// void bt_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_t *param)  // Disabled HFP
+// {
+//     if (event <= ESP_HF_CLIENT_RING_IND_EVT) {
+//         ESP_LOGE(BT_HF_TAG, "APP HFP event: %s", c_hf_evt_str[event]);
+//     } else {
+//         ESP_LOGE(BT_HF_TAG, "APP HFP invalid event %d", event);
+//     }
 
     switch (event) {
     case ESP_HF_CLIENT_CONNECTION_STATE_EVT:
@@ -872,6 +890,7 @@ void bt_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_t *p
         break;
     }
 }
+#endif  // Disabled HFP
 
 // Auto-reconnect functions
 static esp_err_t save_last_bt_device(uint8_t *addr)
@@ -917,6 +936,77 @@ static esp_err_t load_last_bt_device(uint8_t *addr)
     
     nvs_close(nvs_handle);
     return err;
+}
+
+static void bt_avrc_connection_cb(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_param_t *param)
+{
+    if (event == ESP_AVRC_CT_CONNECTION_STATE_EVT) {
+        avrc_connected = param->conn_stat.connected;
+        ESP_LOGI(TAG, "Bluetooth AVRCP %s", avrc_connected ? "connected" : "disconnected");
+    }
+}
+
+static void bt_a2dp_connection_cb(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param)
+{
+    if (event == ESP_A2D_CONNECTION_STATE_EVT) {
+        a2dp_connected = param->conn_stat.state == ESP_A2D_CONNECTION_STATE_CONNECTED;
+        if (!a2dp_connected) {
+            a2dp_audio_started = false;
+        }
+        ESP_LOGI(TAG, "Bluetooth A2DP %s", a2dp_connected ? "connected" : "disconnected");
+    } else if (event == ESP_A2D_AUDIO_STATE_EVT) {
+        a2dp_audio_started = param->audio_stat.state == ESP_A2D_AUDIO_STATE_STARTED;
+        if (a2dp_audio_started) {
+            ESP_LOGI(TAG, "Bluetooth A2DP audio started");
+        }
+    }
+}
+
+static void bt_play_on_connect_task(void *arg)
+{
+    TickType_t start_time = xTaskGetTickCount();
+    TickType_t timeout_ticks = pdMS_TO_TICKS(15000);
+
+    while (is_connected && !avrc_connected
+           && (xTaskGetTickCount() - start_time) < timeout_ticks) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    if (is_connected && avrc_connected && bt_periph) {
+        for (int attempt = 1; attempt <= 5 && is_connected && avrc_connected; attempt++) {
+            if (a2dp_audio_started) {
+                ESP_LOGI(TAG, "A2DP audio is already playing");
+                break;
+            }
+
+            ESP_LOGI(TAG, "Sending AVRCP play command (attempt %d/5)", attempt);
+            esp_err_t err = periph_bluetooth_play(bt_periph);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to send Bluetooth play command: %s", esp_err_to_name(err));
+            }
+
+            TickType_t retry_start = xTaskGetTickCount();
+            TickType_t retry_ticks = pdMS_TO_TICKS(2000);
+            while (is_connected && avrc_connected && !a2dp_audio_started
+                   && (xTaskGetTickCount() - retry_start) < retry_ticks) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+        }
+        if (is_connected && !a2dp_audio_started) {
+            ESP_LOGW(TAG, "A2DP audio did not start after automatic play attempts");
+        }
+    } else if (is_connected) {
+        ESP_LOGW(TAG, "AVRCP did not connect; skipping automatic play command");
+    }
+
+    vTaskDelete(NULL);
+}
+
+static void bt_schedule_auto_play(void)
+{
+    if (xTaskCreate(bt_play_on_connect_task, "bt_play_on_connect", 2048, NULL, 4, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create Bluetooth auto-play task");
+    }
 }
 
 static void bt_reconnect_task(void *arg)
@@ -1096,6 +1186,10 @@ void app_main(void)
     bluetooth_service_cfg_t bt_cfg = {
         .device_name = "ForD DensO",
         .mode = BLUETOOTH_A2DP_SINK,
+        .user_callback = {
+            .user_a2d_cb = bt_a2dp_connection_cb,
+            .user_avrc_ct_cb = bt_avrc_connection_cb,
+        },
     };
     bluetooth_service_start(&bt_cfg);
     
@@ -1109,8 +1203,8 @@ void app_main(void)
     
     ESP_LOGI(TAG, "Bluetooth GAP callback registered and security params set");
     
-    esp_hf_client_register_callback(bt_hf_client_cb);
-    esp_hf_client_init();
+    // esp_hf_client_register_callback(bt_hf_client_cb);  // Disabled HFP
+    // esp_hf_client_init();  // Disabled HFP
 
     ESP_LOGI(TAG, "[ 2 ] Start codec chip");
     audio_board_handle_t board_handle = audio_board_init();
@@ -1241,18 +1335,6 @@ void app_main(void)
     ESP_LOGI(TAG, "[4.2] Create Bluetooth peripheral");
     bt_periph = bluetooth_service_create_periph();
 
-    ESP_LOGI(TAG, "[4.2] Start all peripherals");
-    esp_periph_start(set, bt_periph);
-
-    ESP_LOGI(TAG, "[4.2.1] Start auto-reconnect if needed");
-    // Start auto-reconnect task if we have a saved device
-    if (has_saved_device && auto_reconnect_enabled) {
-        ESP_LOGI(TAG, "Auto-reconnect enabled, will try to reconnect to last device");
-        xTaskCreate(bt_reconnect_task, "bt_reconnect", 3072, NULL, 4, NULL);
-    } else {
-        ESP_LOGI(TAG, "No saved device or auto-reconnect disabled, staying discoverable");
-    }
-
     ESP_LOGI(TAG, "[4.3] Initialize Sleep Control");
     // Check wakeup reason
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
@@ -1286,10 +1368,35 @@ void app_main(void)
     audio_pipeline_run(pipeline_d);
     audio_pipeline_run(pipeline_e);
 
+    ESP_LOGI(TAG, "[6.1] Start Bluetooth peripheral after event listeners are ready");
+    esp_periph_start(set, bt_periph);
+
+    ESP_LOGI(TAG, "[6.2] Start auto-reconnect if needed");
+    if (has_saved_device && auto_reconnect_enabled) {
+        ESP_LOGI(TAG, "Auto-reconnect enabled, will try to reconnect to last device");
+        if (xTaskCreate(bt_reconnect_task, "bt_reconnect", 3072, NULL, 4, NULL) != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create Bluetooth auto-reconnect task");
+        }
+    } else {
+        ESP_LOGI(TAG, "No saved device or auto-reconnect disabled, staying discoverable");
+    }
+
     ESP_LOGI(TAG, "[ 7 ] Listen for all pipeline events");
     while (1) {
         audio_event_iface_msg_t msg;
-        esp_err_t ret = audio_event_iface_listen(evt, &msg, portMAX_DELAY);
+        esp_err_t ret = audio_event_iface_listen(evt, &msg, pdMS_TO_TICKS(100));
+        if (ret == ESP_ERR_TIMEOUT) {
+            if (a2dp_connected != is_connected) {
+                is_connected = a2dp_connected;
+                if (is_connected) {
+                    ESP_LOGI(TAG, "A2DP connection detected from Bluetooth callback");
+                    bt_schedule_auto_play();
+                } else {
+                    a2dp_audio_started = false;
+                }
+            }
+            continue;
+        }
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "[ * ] Event interface error : %d", ret);
             continue;
@@ -1302,12 +1409,13 @@ void app_main(void)
 
             ESP_LOGI(TAG, "[ * ] Receive music info from Bluetooth, sample_rates=%d, bits=%d, ch=%d",
                      music_info.sample_rates, music_info.bits, music_info.channels);
-            
+
             // Mark as connected
             if (!is_connected) {
                 is_connected = true;
                 ESP_LOGI(TAG, "Bluetooth A2DP connection established");
             }
+
 #if (CONFIG_ESP_LYRATD_MSC_V2_1_BOARD || CONFIG_ESP_LYRATD_MSC_V2_2_BOARD)
             rsp_filter_set_src_info(filter_d, music_info.sample_rates, music_info.channels);
             i2s_stream_set_clk(i2s_stream_writer, 48000, 16, 2);
@@ -1342,9 +1450,23 @@ void app_main(void)
         /* Stop when the Bluetooth is disconnected or suspended */
         if (msg.source_type == PERIPH_ID_BLUETOOTH
             && msg.source == (void *)bt_periph) {
-            if (msg.cmd == PERIPH_BLUETOOTH_DISCONNECTED) {
+            if (msg.cmd == PERIPH_BLUETOOTH_CONNECTED) {
+                ESP_LOGI(TAG, "Bluetooth A2DP connection established");
+                is_connected = true;
+                bt_schedule_auto_play();
+                continue;
+            } else if (msg.cmd == PERIPH_BLUETOOTH_AUDIO_STARTED) {
+                ESP_LOGI(TAG, "Bluetooth A2DP audio started");
+                a2dp_audio_started = true;
+                continue;
+            } else if (msg.cmd == PERIPH_BLUETOOTH_AUDIO_SUSPENDED
+                       || msg.cmd == PERIPH_BLUETOOTH_AUDIO_STOPPED) {
+                a2dp_audio_started = false;
+                continue;
+            } else if (msg.cmd == PERIPH_BLUETOOTH_DISCONNECTED) {
                 ESP_LOGW(TAG, "[ * ] Bluetooth disconnected");
                 is_connected = false;
+                a2dp_audio_started = false;
                 
                 // Try to reconnect if auto-reconnect is enabled and no task is already running
                 if (auto_reconnect_enabled && has_saved_device && !reconnect_task_running) {
