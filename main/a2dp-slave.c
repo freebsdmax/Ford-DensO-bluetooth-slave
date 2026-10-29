@@ -50,6 +50,7 @@
 #include "bt_keycontrol.h"
 #include "slave_version.h"
 #include "slave_uart_version.h"
+#include "avrc_media.h"
 #include "slave_uart_version.h"
 
 #include "audio_idf_version.h"
@@ -399,6 +400,32 @@ static void uart_cmd_task(void *arg)
                         periph_bluetooth_pause(bt_periph);
                     }
                     break;
+
+                case UART_CMD_GET_MEDIA: {
+                    uint8_t frame[3 + 160];
+                    frame[0] = UART_CMD_PREFIX_NORMAL;
+                    frame[1] = UART_CMD_MEDIA_STATE;
+                    size_t n = avrc_media_build_payload(&frame[3], sizeof(frame) - 3);
+                    frame[2] = (uint8_t)n;
+                    if (n > 0) {
+                        uart_write_bytes(APP_UART_PORT, (const char *)frame, 3 + n);
+                    }
+                    break;
+                }
+
+                case UART_CMD_SEEK: {
+                    uint8_t d[4] = {0};
+                    if (uart_read_bytes(APP_UART_PORT, d, 4, pdMS_TO_TICKS(300)) == 4) {
+                        int32_t delta = (int32_t)((uint32_t)d[0] | ((uint32_t)d[1] << 8) |
+                                                  ((uint32_t)d[2] << 16) | ((uint32_t)d[3] << 24));
+                        ESP_LOGI(TAG, "CMD: seek %+ld ms", (long)delta);
+                        avrc_media_seek(delta);
+                    } else {
+                        ESP_LOGW(TAG, "CMD: seek without payload");
+                    }
+                    break;
+                }
+
 
                 case UART_CMD_GET_FW_VER: {
                     ESP_LOGI(TAG, "CMD: Get firmware version");
@@ -958,6 +985,8 @@ static void bt_avrc_connection_cb(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_p
         avrc_connected = param->conn_stat.connected;
         ESP_LOGI(TAG, "Bluetooth AVRCP %s", avrc_connected ? "connected" : "disconnected");
     }
+    /* metadata (title/artist/duration/position) and notifications */
+    avrc_media_on_event(event, param);
 }
 
 static void bt_a2dp_connection_cb(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param)
@@ -1206,6 +1235,7 @@ void app_main(void)
         },
     };
     bluetooth_service_start(&bt_cfg);
+    avrc_media_start();
     
     // Register GAP callback to track connections
     esp_bt_gap_register_callback(bt_gap_cb);

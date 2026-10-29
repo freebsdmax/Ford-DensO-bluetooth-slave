@@ -38,6 +38,9 @@
 #define UART_CMD_PLAY              0x07  /* AVRCP play  (external/BT mode) */
 #define UART_CMD_PAUSE             0x08  /* AVRCP pause  (external/BT mode) */
 #define UART_CMD_GET_FW_VER        0x09  /* firmware version: resp [0xAA][0x09][len][chars] */
+#define UART_CMD_MEDIA_STATE       0x0A  /* slave -> master: [0xAA][0x0A][len][flags:1][pos:4][dur:4][tlen:1][title][alen:1][artist] */
+#define UART_CMD_SEEK              0x0B  /* master -> slave: [0xAA][0x0B][delta_ms:int32 LE] (approx. seek) */
+#define UART_CMD_GET_MEDIA         0x0C  /* master -> slave: request the media state */
 
 // ============ НАЛАШТУВАННЯ ============
 #define UART_OTA_BLOCK_SIZE        240   // Розмір блоку даних (без заголовків)
