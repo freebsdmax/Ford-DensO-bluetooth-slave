@@ -12,7 +12,7 @@ Master по I2S, а командами/метаданими обмінюєтьс
 | **App** | https://github.com/freebsdmax/Esp32_Android_app | Android (BLE-only) |
 
 Повна довідка по системі: **`HELP.md` у репозиторії Master**
-(https://github.com/freebsdmax/Ford-DensO-mp3-master/blob/debug/HELP.md).
+(https://github.com/freebsdmax/Ford-DensO-mp3-master/blob/main/HELP.md).
 
 ## Залізо
 
