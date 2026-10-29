@@ -1,84 +1,90 @@
-# I2C Slave Device with OTA Support
+# I2C Slave-пристрій з підтримкою OTA
 
-This ESP32 Bluetooth device acts as an I2C slave (address `0x42`) and can be updated via OTA through I2C protocol from a master device (e.g., `pipeline_play_sdcard_music`).
+> **Історичний документ.** Описаний тут I2C-протокол більше не використовується:
+> зв'язок Master ↔ Slave давно переведено на **UART** (див. `README_UART.md` і `HELP.md`).
 
-## I2C Configuration
+Цей ESP32 працює як I2C-slave (адреса `0x42`) і міг оновлюватися по OTA через I2C від
+master-пристрою (наприклад, `pipeline_play_sdcard_music`).
 
-- **Address**: `0x42`
+## Конфігурація I2C
+
+- **Адреса**: `0x42`
 - **SDA**: GPIO 22
 - **SCL**: GPIO 23
-- **Pull-ups**: Internal enabled
+- **Підтяжки**: внутрішні, увімкнені
 
-## OTA Protocol
+## Протокол OTA
 
-The device implements the following I2C OTA protocol:
+Пристрій реалізовував такий I2C OTA-протокол:
 
-### 1. OTA Start (0xF0)
-Master sends: `[0xF0, size_MSB, size_2, size_3, size_LSB]`  
-Slave responds: `0xAA` (success) or `0xFF` (error)
+### 1. Старт OTA (0xF0)
 
-### 2. OTA Data Block (0xF1)
-Master sends: `[0xF1, block_hi, block_lo, len, data[64]]`  
-- `block_hi`, `block_lo`: 16-bit block number
-- `len`: actual data length (max 64)
-- `data[]`: firmware bytes
+Master надсилає: `[0xF0, size_MSB, size_2, size_3, size_LSB]`
+Slave відповідає: `0xAA` (успіх) або `0xFF` (помилка)
 
-Slave responds: `0xBB` (success) or `0xFF` (error)
+### 2. Блок даних (0xF1)
 
-### 3. OTA End (0xF2)
-Master sends: `[0xF2]`  
-Slave responds: `0xCC` (success) or `0xFF` (error)  
-Device will reboot automatically after 2 seconds.
+Master надсилає: `[0xF1, block_hi, block_lo, len, data[64]]`
 
-### 4. OTA Abort (0xF3)
-Master sends: `[0xF3]`  
-Slave responds: `0xDD` (aborted)
+- `block_hi`, `block_lo`: 16-бітний номер блоку
+- `len`: фактична довжина даних (максимум 64)
+- `data[]`: байти прошивки
 
-## Regular I2C Commands
+Slave відповідає: `0xBB` (успіх) або `0xFF` (помилка)
 
-- `0x01` - Volume Up
-- `0x02` - Volume Down
-- `0x03` - Play/Pause
-- `0x04` - Next Track
-- `0x05` - Previous Track
-- `0x10` - Get Status (returns `0x01` if connected, `0x00` otherwise)
+### 3. Кінець OTA (0xF2)
 
-## Building and Flashing
+Master надсилає: `[0xF2]`
+Slave відповідає: `0xCC` (успіх) або `0xFF` (помилка)
+Пристрій перезавантажується автоматично через 2 секунди.
 
-1. Build the project:
+### 4. Скасування OTA (0xF3)
+
+Master надсилає: `[0xF3]`
+Slave відповідає: `0xDD` (скасовано)
+
+## Звичайні I2C-команди
+
+- `0x01` — гучніше
+- `0x02` — тихіше
+- `0x03` — відтворити/пауза
+- `0x04` — наступний трек
+- `0x05` — попередній трек
+- `0x10` — отримати статус (`0x01` якщо підключено, `0x00` якщо ні)
+
+## Збірка і прошивка
+
+1. Зібрати проєкт:
    ```bat
-   cd d:\emulators\esp32-bluetooth
+   cd D:\emulators\Ford-DensO-bluetooth-slave
    idf.py build
    ```
-
-2. Flash to ESP32:
+2. Прошити ESP32:
    ```bat
    idf.py -p COMx flash monitor
    ```
 
-3. Or use OTA from master device via web interface at `http://192.168.4.1/`
+## Оновлення з Master-пристрою
 
-## OTA Update from Master Device
+1. Підключитися до Wi-Fi Master (ESP32-S3).
+2. Відкрити `http://<ip-адреса>/` у браузері.
+3. Вибрати розділ **OTA**.
+4. Вибрати `Ford-DensO-bluetooth-slave.bin`.
+5. Натиснути «Завантажити та оновити Slave».
+6. Дочекатися завершення (~2 хвилини для образу 1.2 МБ на 115200 бод).
+7. Slave перезавантажиться автоматично.
 
-1. Connect to ESP32-S3 (pipeline_play_sdcard_music) Wi-Fi AP: `ESP32-CAN-Sniffer` / `12345678`
-2. Open `http://192.168.4.1/` in browser
-3. Select **I2C Slave (0x42)** radio button
-4. Choose `app.bin` from `esp32-bluetooth/build/` folder
-5. Click Upload & Update
-6. Wait for completion (~30 seconds for 1.5MB firmware)
-7. I2C slave device will reboot automatically
+## Розділи
 
-## Partitions
+Пристрій використовує OTA-розділи:
 
-The device uses OTA partitions:
-- `ota_0`: 1536KB at 0x20000
-- `ota_1`: 1536KB at 0x1A0000
-- `otadata`: 8KB at 0xF000
+- `ota_0`: 1536 КБ за адресою 0x20000
+- `ota_1`: 1536 КБ за адресою 0x1A0000
+- `otadata`: 8 КБ за адресою 0xF000
 
-## Notes
+## Примітки
 
-- Firmware blocks are sent in 64-byte chunks
-- Total transfer time depends on I2C speed (100kHz) and firmware size
-- Device reboots automatically after successful OTA
-- Master device must implement proper timing (20-50ms delays between blocks)
-- If OTA fails mid-transfer, device stays on previous working partition
+- прошивка передається блоками по 240 байт (UART) із CRC16 на блок;
+- загальний час залежить від швидкості лінії (115200 бод) і розміру образу;
+- пристрій перезавантажується після успішного OTA;
+- якщо OTA обірвався посередині, пристрій лишається на попередньому робочому розділі.
