@@ -202,10 +202,17 @@ size_t avrc_media_build_payload(uint8_t *buf, size_t cap)
 void avrc_media_seek(int32_t delta_ms)
 {
     if (!s_connected || delta_ms == 0) return;
+    /* Ignore tiny changes: a single FF/REW press already moves ~10 s. */
+    if (delta_ms > -5000 && delta_ms < 5000) {
+        ESP_LOGI(TAG, "Seek %+ld ms ignored (too small)", (long)delta_ms);
+        return;
+    }
 
     int steps = (int)((delta_ms < 0 ? -delta_ms : delta_ms) / SEEK_STEP_MS);
     if (steps < 1) steps = 1;
-    if (steps > 10) steps = 10;
+    /* Long bursts are turned into "next track" by some players (YouTube),
+       so never send more than three presses. */
+    if (steps > 3) steps = 3;
 
     const uint8_t key = delta_ms > 0 ? ESP_AVRC_PT_CMD_FORWARD : ESP_AVRC_PT_CMD_BACKWARD;
     ESP_LOGI(TAG, "Seek %+ld ms -> %d x %s", (long)delta_ms, steps,
@@ -213,12 +220,12 @@ void avrc_media_seek(int32_t delta_ms)
 
     for (int i = 0; i < steps; i++) {
         esp_avrc_ct_send_passthrough_cmd(next_tl(), key, ESP_AVRC_PT_CMD_STATE_PRESSED);
-        vTaskDelay(pdMS_TO_TICKS(40));
+        vTaskDelay(pdMS_TO_TICKS(60));
         esp_avrc_ct_send_passthrough_cmd(next_tl(), key, ESP_AVRC_PT_CMD_STATE_RELEASED);
-        vTaskDelay(pdMS_TO_TICKS(160));
+        vTaskDelay(pdMS_TO_TICKS(450));
     }
     /* The phone needs a moment to update; refresh right after. */
-    vTaskDelay(pdMS_TO_TICKS(300));
+    vTaskDelay(pdMS_TO_TICKS(400));
     avrc_media_request_state();
 }
 
