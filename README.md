@@ -5,6 +5,18 @@ Bluetooth-модуль системи: приймає звук з телефон
 
 Працює на **ESP-ADF** (Espressif Audio Development Framework).
 
+
+## Довідка та пов'язані репозиторії
+
+| Компонент | Репозиторій |
+|---|---|
+| Master (ESP32-S3) | https://github.com/freebsdmax/Ford-DensO-mp3-master |
+| Slave (ESP32 Bluetooth) | https://github.com/freebsdmax/Ford-DensO-bluetooth-slave |
+| Android-застосунок | https://github.com/freebsdmax/Esp32_Android_app |
+
+- Повна довідка по системі: [HELP.md](https://github.com/freebsdmax/Ford-DensO-mp3-master/blob/debug/HELP.md)
+- Довідка цього компонента: [HELP.md](HELP.md)
+
 ---
 
 ## Роль у системі
