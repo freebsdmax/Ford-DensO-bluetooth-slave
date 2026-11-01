@@ -106,6 +106,10 @@ idf.py -p COMx flash monitor
 | `0xAA` | `0x06` GET_VERSION | відповідь 65 Б (дати збірок) |
 | `0xAA` | `0x07` PLAY | AVRCP play |
 | `0xAA` | `0x08` PAUSE | AVRCP pause |
+| `0xAA` | `0x09` GET_FW_VER | відповідь: `[0xAA][0x09][len][версія]` (git-тег) |
+| `0xAA` | `0x0C` GET_MEDIA | стан медіа: `flags, pos, dur, title, artist` |
+| `0xAA` | `0x0B` SEEK | `delta_ms:int32` — наближена перемотка (FF/REW) |
+| `0xAA` | `0x0D` SET_SEEK | `step_s:1`, `mode:1` (0=натискання, 1=утримання) |
 
 ### OTA (Master → Slave)
 

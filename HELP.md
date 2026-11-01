@@ -72,6 +72,7 @@ python -m esptool merge_bin --flash_mode dio --flash_freq 40m --flash_size 4MB `
 | `0x0C` | M→S | дай стан медіа |
 | `0x0A` | S→M | `flags,pos:4,dur:4,tlen,title,alen,artist` |
 | `0x0B` | M→S | seek `[delta_ms:int32 LE]` |
+| `0x0D` | M→S | налаштування перемотки: `[step_s:1][mode:1]` |
 
 OTA-кадри Master→Slave: `[0x55][0x01..0x05]` (start/data/end/verify/abort).
 
