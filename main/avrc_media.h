@@ -33,3 +33,7 @@ size_t avrc_media_build_payload(uint8_t *buf, size_t cap);
 
 /** Approximate seek: AVRCP has no absolute seek, so FF/REW presses are used. */
 void avrc_media_seek(int32_t delta_ms);
+
+/** step_s: скільки секунд аудіо переміщує одне натискання FF/REW (5..30)
+    mode: 0 = кілька натискань, 1 = одне довге утримання */
+void avrc_media_set_seek_config(uint8_t step_s, uint8_t mode);

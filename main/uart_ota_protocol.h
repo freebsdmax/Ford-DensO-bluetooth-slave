@@ -41,6 +41,7 @@
 #define UART_CMD_MEDIA_STATE       0x0A  /* slave -> master: [0xAA][0x0A][len][flags:1][pos:4][dur:4][tlen:1][title][alen:1][artist] */
 #define UART_CMD_SEEK              0x0B  /* master -> slave: [0xAA][0x0B][delta_ms:int32 LE] (approx. seek) */
 #define UART_CMD_GET_MEDIA         0x0C  /* master -> slave: request the media state */
+#define UART_CMD_SET_SEEK          0x0D  /* master -> slave: [0xAA][0x0D][step_s:1][mode:1]  mode: 0=presses 1=hold */
 
 // ============ НАЛАШТУВАННЯ ============
 #define UART_OTA_BLOCK_SIZE        240   // Розмір блоку даних (без заголовків)

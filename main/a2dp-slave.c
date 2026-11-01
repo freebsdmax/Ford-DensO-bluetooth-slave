@@ -401,6 +401,16 @@ static void uart_cmd_task(void *arg)
                     }
                     break;
 
+                case UART_CMD_SET_SEEK: {
+                    uint8_t cfg[2] = {0};
+                    if (uart_read_bytes(APP_UART_PORT, cfg, 2, pdMS_TO_TICKS(300)) == 2) {
+                        avrc_media_set_seek_config(cfg[0], cfg[1]);
+                    } else {
+                        ESP_LOGW(TAG, "CMD: seek config without payload");
+                    }
+                    break;
+                }
+
                 case UART_CMD_GET_MEDIA: {
                     uint8_t frame[3 + 160];
                     frame[0] = UART_CMD_PREFIX_NORMAL;

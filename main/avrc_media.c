@@ -13,7 +13,10 @@ static const char *TAG = "AVRC_MEDIA";
 
 #define TITLE_MAX      78
 #define ARTIST_MAX     46
-#define SEEK_STEP_MS   10000   /* what one FF/REW press usually seeks on Android */
+#define SEEK_STEP_MS   10000   /* типовий крок одного натискання, якщо не задано з Master */
+
+static volatile uint8_t s_seek_step_s = 10;   /* 5..30 с на одне натискання */
+static volatile uint8_t s_seek_mode = 0;      /* 0 = натискання, 1 = утримання */
 
 static char s_title[TITLE_MAX + 1];
 static char s_artist[ARTIST_MAX + 1];
@@ -208,21 +211,33 @@ void avrc_media_seek(int32_t delta_ms)
         return;
     }
 
-    int steps = (int)((delta_ms < 0 ? -delta_ms : delta_ms) / SEEK_STEP_MS);
+    const uint32_t step_ms = (uint32_t)s_seek_step_s * 1000u;
+    int steps = (int)((delta_ms < 0 ? -delta_ms : delta_ms) / (int32_t)step_ms);
     if (steps < 1) steps = 1;
-    /* Long bursts are turned into "next track" by some players (YouTube),
-       so never send more than three presses. */
-    if (steps > 3) steps = 3;
 
     const uint8_t key = delta_ms > 0 ? ESP_AVRC_PT_CMD_FORWARD : ESP_AVRC_PT_CMD_BACKWARD;
-    ESP_LOGI(TAG, "Seek %+ld ms -> %d x %s", (long)delta_ms, steps,
-             delta_ms > 0 ? "FF" : "REW");
 
-    for (int i = 0; i < steps; i++) {
+    if (s_seek_mode == 1) {
+        /* Одне довге утримання: плеєр перемотує безперервно. */
+        uint32_t hold_ms = (uint32_t)steps * 300u;
+        if (hold_ms < 200) hold_ms = 200;
+        if (hold_ms > 2500) hold_ms = 2500;
+        ESP_LOGI(TAG, "Seek %+ld ms -> hold %s %lu ms", (long)delta_ms,
+                 delta_ms > 0 ? "FF" : "REW", (unsigned long)hold_ms);
         esp_avrc_ct_send_passthrough_cmd(next_tl(), key, ESP_AVRC_PT_CMD_STATE_PRESSED);
-        vTaskDelay(pdMS_TO_TICKS(60));
+        vTaskDelay(pdMS_TO_TICKS(hold_ms));
         esp_avrc_ct_send_passthrough_cmd(next_tl(), key, ESP_AVRC_PT_CMD_STATE_RELEASED);
-        vTaskDelay(pdMS_TO_TICKS(450));
+    } else {
+        /* Кілька коротких натискань (не більше 3, інакше плеєр сприймає як «наступний трек»). */
+        if (steps > 3) steps = 3;
+        ESP_LOGI(TAG, "Seek %+ld ms -> %d x %s (step %u s)", (long)delta_ms, steps,
+                 delta_ms > 0 ? "FF" : "REW", (unsigned)s_seek_step_s);
+        for (int i = 0; i < steps; i++) {
+            esp_avrc_ct_send_passthrough_cmd(next_tl(), key, ESP_AVRC_PT_CMD_STATE_PRESSED);
+            vTaskDelay(pdMS_TO_TICKS(60));
+            esp_avrc_ct_send_passthrough_cmd(next_tl(), key, ESP_AVRC_PT_CMD_STATE_RELEASED);
+            vTaskDelay(pdMS_TO_TICKS(450));
+        }
     }
     /* The phone needs a moment to update; refresh right after. */
     vTaskDelay(pdMS_TO_TICKS(400));
@@ -245,4 +260,14 @@ static void avrc_media_task(void *arg)
 void avrc_media_start(void)
 {
     xTaskCreate(avrc_media_task, "avrc_media", 3072, NULL, 3, NULL);
+}
+
+void avrc_media_set_seek_config(uint8_t step_s, uint8_t mode)
+{
+    if (step_s < 5) step_s = 5;
+    if (step_s > 30) step_s = 30;
+    s_seek_step_s = step_s;
+    s_seek_mode = (mode == 1) ? 1 : 0;
+    ESP_LOGI(TAG, "Seek config: %u s per press, mode=%s",
+             (unsigned)s_seek_step_s, s_seek_mode ? "hold" : "presses");
 }
