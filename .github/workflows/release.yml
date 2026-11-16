@@ -72,22 +72,43 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
 
+      - name: Build release notes
+        run: |
+          PREV=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          NOTES="release-notes/${GITHUB_REF_NAME}.md"
+          {
+            echo "## Що змінилось"
+            echo ""
+            if [ -f "$NOTES" ]; then
+              cat "$NOTES"
+            elif [ -n "$PREV" ]; then
+              git log --pretty=format:"- %s (\`%h\`)" "$PREV".."${GITHUB_REF_NAME}"
+            else
+              git log --pretty=format:"- %s (\`%h\`)" -20
+            fi
+            echo ""
+            echo ""
+            echo "## Файли"
+            echo "- \`Ford-DensO-bluetooth-slave-full.bin\` — повний образ (flash на \`0x0\`, 4 МБ)"
+            echo "- \`Ford-DensO-bluetooth-slave.bin\` — образ для OTA через master (застосунок / веб)"
+            echo ""
+            echo "## Прошивка"
+            echo '```bash'
+            echo "esptool.py --chip esp32 -p /dev/ttyUSB0 -b 921600 write_flash 0x0 Ford-DensO-bluetooth-slave-full.bin"
+            echo '```'
+            echo ""
+            echo "> OTA: застосунок → OTA → «Прошити Slave» (master передає образ по UART)."
+          } > RELEASE_NOTES.md
+
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/**/*
-          generate_release_notes: true
-          body: |
-            Ford Player — Slave firmware (ESP32 A2DP)
-
-            **Files**
-            - `Ford-DensO-bluetooth-slave-full.bin` — single image, flash at `0x0`
-            - `Ford-DensO-bluetooth-slave.bin` — app image for OTA from the master
-
-            **Flash**
-            ```bash
-            esptool.py --chip esp32 -p /dev/ttyUSB0 -b 921600 write_flash 0x0 Ford-DensO-bluetooth-slave-full.bin
-            ```
+          body_path: RELEASE_NOTES.md

@@ -170,9 +170,16 @@ static void enter_deep_sleep(gpio_num_t wakeup_pin);
 #define NVS_KEY_SLAVE_UART_DATE "slave_uart_date"
 #define NVS_KEY_SLAVE_UART_TIME "slave_uart_time"
 #define RECONNECT_TIMEOUT_MS 15000  // 15 seconds timeout for reconnection
+#define RECONNECT_RETRY_DELAY_MS 10000  // пауза між спробами, поки телефон не в радіусі
 #define DISCOVERABLE_TIMEOUT_MS 60000  // 60 seconds discoverable after failed reconnect
 
 static bool auto_reconnect_enabled = true;
+/* Автопрогравання, коли телефон підключається до цього модуля.
+   Керується з застосунку (master -> UART 0x0E), зберігається в NVS. */
+static bool bt_autoplay = true;
+
+static void bt_autoplay_load(void);
+static void bt_autoplay_set(bool enabled);
 static volatile bool is_connected = false;
 static volatile bool a2dp_connected = false;
 static volatile bool avrc_connected = false;
@@ -400,6 +407,16 @@ static void uart_cmd_task(void *arg)
                         periph_bluetooth_pause(bt_periph);
                     }
                     break;
+
+                case UART_CMD_SET_AUTOPLAY: {
+                    uint8_t val = 0;
+                    if (uart_read_bytes(APP_UART_PORT, &val, 1, pdMS_TO_TICKS(300)) == 1) {
+                        bt_autoplay_set(val != 0);
+                    } else {
+                        ESP_LOGW(TAG, "CMD: autoplay without payload");
+                    }
+                    break;
+                }
 
                 case UART_CMD_SET_SEEK: {
                     uint8_t cfg[2] = {0};
@@ -944,6 +961,30 @@ static void bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param)
 #endif  // Disabled HFP
 
 // Auto-reconnect functions
+static void bt_autoplay_load(void)
+{
+    nvs_handle_t h;
+    uint8_t v = 1;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
+        if (nvs_get_u8(h, "autoplay", &v) != ESP_OK) v = 1;
+        nvs_close(h);
+    }
+    bt_autoplay = (v != 0);
+    ESP_LOGI(TAG, "Autoplay on Bluetooth connect: %s", bt_autoplay ? "on" : "off");
+}
+
+static void bt_autoplay_set(bool enabled)
+{
+    bt_autoplay = enabled;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, "autoplay", enabled ? 1 : 0);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    ESP_LOGI(TAG, "Autoplay set from master: %s", enabled ? "on" : "off");
+}
+
 static esp_err_t save_last_bt_device(uint8_t *addr)
 {
     nvs_handle_t nvs_handle;
@@ -1057,6 +1098,10 @@ static void bt_play_on_connect_task(void *arg)
 
 static void bt_schedule_auto_play(void)
 {
+    if (!bt_autoplay) {
+        ESP_LOGI(TAG, "Autoplay on Bluetooth connect is disabled");
+        return;
+    }
     if (xTaskCreate(bt_play_on_connect_task, "bt_play_on_connect", 2048, NULL, 4, NULL) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create Bluetooth auto-play task");
     }
@@ -1084,40 +1129,41 @@ static void bt_reconnect_task(void *arg)
              last_connected_addr[0], last_connected_addr[1], last_connected_addr[2],
              last_connected_addr[3], last_connected_addr[4], last_connected_addr[5]);
     
-    // Initiate connection to saved device
-    esp_err_t err = esp_a2d_sink_connect(last_connected_addr);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initiate A2DP connection: %s", esp_err_to_name(err));
-        // Fall back to discoverable mode
-        if (bt_periph) {
-            ESP_LOGI(TAG, "Enabling discoverable mode for new connections");
+    /* Пробуємо, поки не підключимось: телефон міг вийти з радіусу
+       (запалення вимкнене) — тоді просто повторюємо кожні 10 секунд.
+       Після першої невдачі вмикаємо discoverable, щоб можна було
+       підключити інший телефон вручну. */
+    int attempt = 0;
+    while (!is_connected) {
+        attempt++;
+        ESP_LOGI(TAG, "Reconnect attempt %d to %02x:%02x:%02x:%02x:%02x:%02x",
+                 attempt,
+                 last_connected_addr[0], last_connected_addr[1], last_connected_addr[2],
+                 last_connected_addr[3], last_connected_addr[4], last_connected_addr[5]);
+
+        esp_err_t err = esp_a2d_sink_connect(last_connected_addr);
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(TAG, "A2DP connect failed: %s", esp_err_to_name(err));
+        }
+
+        TickType_t start_time = xTaskGetTickCount();
+        TickType_t timeout_ticks = pdMS_TO_TICKS(RECONNECT_TIMEOUT_MS);
+        while (!is_connected && (xTaskGetTickCount() - start_time) < timeout_ticks) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
+
+        if (is_connected) {
+            ESP_LOGI(TAG, "Successfully reconnected (attempt %d)", attempt);
+            break;
+        }
+
+        if (attempt == 1 && bt_periph) {
+            ESP_LOGI(TAG, "Enabling discoverable mode while retrying");
             periph_bluetooth_discover(bt_periph);
         }
-        reconnect_task_running = false;
-        vTaskDelete(NULL);
-        return;
+        vTaskDelay(pdMS_TO_TICKS(RECONNECT_RETRY_DELAY_MS));
     }
-    
-    // Wait to see if connection succeeds
-    TickType_t start_time = xTaskGetTickCount();
-    TickType_t timeout_ticks = pdMS_TO_TICKS(RECONNECT_TIMEOUT_MS);
-    
-    while ((xTaskGetTickCount() - start_time) < timeout_ticks) {
-        if (is_connected) {
-            ESP_LOGI(TAG, "Successfully reconnected!");
-            reconnect_task_running = false;
-            vTaskDelete(NULL);
-            return;
-        }
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-    
-    // Reconnection failed, enable discoverable mode
-    ESP_LOGW(TAG, "Reconnection timeout. Enabling discoverable mode for new devices");
-    if (bt_periph) {
-        periph_bluetooth_discover(bt_periph);
-    }
-    
+
     reconnect_task_running = false;
     vTaskDelete(NULL);
 }
@@ -1235,6 +1281,7 @@ void app_main(void)
     
     // Load last connected device
     load_last_bt_device(last_connected_addr);
+    bt_autoplay_load();
     
     bluetooth_service_cfg_t bt_cfg = {
         .device_name = "ForD DensO",
